@@ -165,4 +165,4 @@ def handle(roles_for_providers: dict):
     deleted_roles = get_deleted_roles(new_app_roles, existing_app_roles)
     new_app_roles.extend(deleted_roles)
     update_roles(new_app_roles)
-    delete_rgit oles(new_app_roles, deleted_roles)
+    delete_roles(new_app_roles, deleted_roles)
