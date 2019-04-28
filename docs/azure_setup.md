@@ -65,7 +65,6 @@ Reading metadata file: [../aws-iam-aad/setup//AWS_SSO_Demo.xml]
  Azure AD Tenant Name: staging.mycompany.com
  Enter Enterprise Application Owner User: aws-sso-integration@staging.mycompany.com
  Enter Enterprise Application Owner Password:
- Azure Enterprise Application ID: xxxx-yyyyy-zzzzzz
  iam-saml.secret successfully placed as SecureString
  iam-saml.tenant_name successfully placed as String
  iam-saml.msiam_access_id successfully placed as String
