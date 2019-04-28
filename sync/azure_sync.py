@@ -24,16 +24,16 @@ azure_user = None
 azure_pass = None
 azure_tenant = None
 ad_auth_url = None
-ad_principals_url = None
+ad_app_url = None
 req_header = None
 msiam_access_id = None
-sso_app_id = None
+sso_app_obj_id = None
 access_token = None
 
 
 def init_function():
     try:
-        global azure_user, azure_pass, azure_tenant, ad_auth_url, msiam_access_id, sso_app_id, ad_principals_url, access_token, req_header
+        global azure_user, azure_pass, azure_tenant, ad_auth_url, msiam_access_id, sso_app_obj_id, ad_app_url, access_token, req_header
         # cyphered_secret = ssmc.get_parameter(Name=f'{PREFIX}.secret', WithDecryption=False)['Parameter']['Value']
         # secret = json.loads(kms.decrypt(CiphertextBlob=b64decode(cyphered_secret))['Plaintext'].decode("utf-8"))
         secret_json = ssmc.get_parameter(Name=f'{PREFIX}.secret', WithDecryption=True)['Parameter']['Value']
@@ -41,10 +41,11 @@ def init_function():
         azure_user = secret.get('AzureUser')
         azure_pass = secret.get('AzurePassword')
         azure_tenant = ssmc.get_parameter(Name=f'{PREFIX}.tenant_name')['Parameter']['Value']
-        sso_app_id = ssmc.get_parameter(Name=f'{PREFIX}.appId')['Parameter']['Value']
+        sso_app_obj_id = ssmc.get_parameter(Name=f'{PREFIX}.app_object_id')['Parameter']['Value']
         msiam_access_id = ssmc.get_parameter(Name=f'{PREFIX}.msiam_access_id')
         ad_auth_url = f"https://login.microsoftonline.com/{azure_tenant}/oauth2/token"
-        ad_principals_url = f'https://graph.microsoft.com/beta/{azure_tenant}/servicePrincipals/{sso_app_id}'
+        #ad_principals_url = f'https://graph.microsoft.com/beta/{azure_tenant}/servicePrincipals/{sso_app_id}'
+        ad_app_url = f'https://graph.microsoft.com/beta/{azure_tenant}/applications/{sso_app_obj_id}'
         access_token = authenticate()
         req_header = {
             'Authorization': f'Bearer {access_token}',
@@ -84,10 +85,10 @@ def filter_app_role_by_display_name(app_roles, display_name):
 
 
 def get_existing_app_roles():
-    rsp = requests.get(url=ad_principals_url, headers=req_header)
+    rsp = requests.get(url=ad_app_url, headers=req_header)
     msg = rsp.json()
     if rsp.status_code > 399:
-        logger.error(f'Failed to request existing roles with URL {ad_principals_url}: {msg.get("error")} > {msg.get("error_description")}')
+        logger.error(f'Failed to request existing roles with URL {ad_app_url}: {msg.get("error")} > {msg.get("error_description")}')
         rsp.raise_for_status()
     return msg.get('appRoles')
 
@@ -130,7 +131,8 @@ def update_roles(app_roles):
         "appRoles": app_roles
     }
     logger.info(f'PATCHING ROLES -> {json.dumps(data, indent=4)}')
-    prsp = requests.patch(url=ad_principals_url, headers=req_header, data=json.dumps(data))
+
+    prsp = requests.patch(url=ad_app_url, headers=req_header, data=json.dumps(data))
     msg = prsp.json() if prsp.text and "application/json" in prsp.headers.get('content-type') else {}
     if prsp.status_code > 399:
         logger.error(f"Couldn't patch the roles due to {msg.get('error')}:{msg.get('error_description')}")
@@ -165,4 +167,4 @@ def handle(roles_for_providers: dict):
     deleted_roles = get_deleted_roles(new_app_roles, existing_app_roles)
     new_app_roles.extend(deleted_roles)
     update_roles(new_app_roles)
-    # delete_roles(new_app_roles, deleted_roles)
+    delete_roles(new_app_roles, deleted_roles)

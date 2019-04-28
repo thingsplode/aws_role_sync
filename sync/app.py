@@ -4,7 +4,6 @@ import os
 from sync.util import make_response
 import boto3
 from boto3.session import Session
-from botocore.exceptions import ClientError
 import xml.etree.ElementTree as et
 import importlib
 
@@ -57,6 +56,8 @@ def get_filtered_saml_providers(assumed_session):
         xml = et.fromstring(provider_details['SAMLMetadataDocument'])
         if xml.find(".").attrib["ID"] == saml_id and xml.find(".").attrib["entityID"] == saml_entity_id:
             saml_provider_arns.append(prov.get('Arn'))
+    if len(saml_provider_arns) == 0:
+        logger.warning("The list of filtered SAML providers is 0. This means that no role synchronization will take place.")
     return saml_provider_arns
 
 
@@ -72,7 +73,6 @@ def get_trusted_roles(assumed_session, saml_provider_arns):
                 if prov_arn not in saml_roles:
                     saml_roles[prov_arn] = list()
                 saml_roles[prov_arn].append(role.get('Arn'))
-    print(f'providers and their roles-> {saml_roles}')
     return saml_roles
 
 

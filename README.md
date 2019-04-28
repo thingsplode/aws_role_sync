@@ -10,6 +10,8 @@ https://github.com/awslabs/aws-iam-aad
 
 ## Setup process
 
+https://aws.amazon.com/blogs/security/how-to-automate-saml-federation-to-multiple-aws-accounts-from-microsoft-azure-active-directory/
+
 This guide relies on the use of CloudFormation stack set, which is a centralized way of running CloudFormation templates in 
 member accounts. First we need to prepare the organizations:
 - add the AWSCloudFormationStackSetAdministrationRole and AWSCloudFormationStackSetExecutionRole to the root account 

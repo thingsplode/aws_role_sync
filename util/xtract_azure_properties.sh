@@ -17,6 +17,7 @@ PUT="${AWS} ssm put-parameter --overwrite"
 PROFILE=""
 CURL=$(which curl)
 CLIENT_ID="1950a258-227b-4e31-a9cf-717495945fc2"
+APP_OBJ_ID=null
 
 debug() {
     [[ "${DEBUG}" = true ]] && >&2 echo -e "D: \033[33m ${1} \033[0m"
@@ -40,10 +41,11 @@ put_param(){
 get_unique_file_for_extension(){
     FOLDER=${1}
     FILE_PATTERN=${2}
-    RES=$(find ${FOLDER} -name ${FILE_PATTERN})
-    # >&2 echo "$(echo RES  ${RES} PATTERN  ${FILE_PATTERN} FOLDER ${FOLDER})"
+    debug "Searching in ${FOLDER} for ${FILE_PATTERN}"
+    RES=$(find ${FOLDER} -name "${FILE_PATTERN}")
     [[ $? -ne 0 ]] && >&2 echo -e "\033[31m Pattern [${FILE_PATTERN}] could not be found in ${FOLDER}! Working dir: $(pwd) \033[0m" && exit -1
-    CNT=$(echo ${RES}|wc -l)
+    debug "Files\n${RES}"
+    CNT=$(echo "${RES}"|wc -l)
     HITS=${CNT//[[:blank:]]/}
     if [[ ${HITS} -gt 1 ]]; then
         read -p "More than one file with pattern ${FILE_PATTERN} was found. Please specify the one you need: "  FILE
@@ -52,7 +54,7 @@ get_unique_file_for_extension(){
         >&2 echo -e "\033[31m Required pattern ${FILE_PATTERN} couldn't be found in folder ${FOLDER} \033[0m"
         exit -1
     else
-        echo $(echo ${RES}|head -n1)
+        echo ${RES}
     fi
 }
 
@@ -73,7 +75,7 @@ get_msiam_access_id() {
     TENANT=$1
     APP_ID=$2
     TOKEN=$3
-    URL="https://graph.microsoft.com/beta/${TENANT}/servicePrincipals/${APP_ID}"
+    URL="https://graph.microsoft.com/beta/${TENANT}/applications/${APP_ID}"
     debug "Request URL ${URL}"
     RES=$(${CURL} -s -H "Authorization: Bearer ${TOKEN}" -H "Accept: application/json"  "${URL}")
     ERR_CODE=$?
@@ -88,9 +90,9 @@ process_metadata_vars(){
     METADATA=$(get_unique_file_for_extension "$1" "*.xml")
     [[ -z "${METADATA}" ]] && echo "Metadata file couldn't be found" && exit -1
     echo "Reading metadata file: [${METADATA}]"
-    entityId=$(xmllint --noblanks --xpath 'string(//@entityID)' "${METADATA}")
+    entityId=$(${LINT} --noblanks --xpath 'string(//@entityID)' "${METADATA}")
     [[ $? -ne 0 ]] && >&2 echo "Couldn't extract [entityId]" && exit -1
-    Id=$(xmllint --noblanks --xpath 'string(//@ID)' "${METADATA}")
+    Id=$(${LINT} --noblanks --xpath 'string(//@ID)' "${METADATA}")
     [[ $? -ne 0 ]] && >&2 echo "Couldn't extract [ID]" && exit -1
     # echo "Saving [${ID}] as saml_id"
     put_param "iam-saml.saml_id" "${Id}"
@@ -98,12 +100,21 @@ process_metadata_vars(){
     put_param "iam-saml.saml_entity_id" "${entityId}"
 }
 
+process_manifest_vars(){
+    MANIFEST=$(get_unique_file_for_extension "$1" "*.json")
+    [[ -z "${MANIFEST}" ]] && echo "Manifest file couldn't be found" && exit -1
+    debug "MANIFEST FILE: ${MANIFEST}"
+    APP_OBJ_ID=$(${JQ} '.id' ${MANIFEST})
+    APP_OBJ_ID=${APP_OBJ_ID//\"}
+    put_param "iam-saml.app_object_id" "${APP_OBJ_ID}"
+    [[ ${APP_OBJ_ID} -eq 'null' ]] && >&2 echo -e "\033[31m SSO Application Object ID not found \033[0m" && exit -1
+}
+
 set_params(){
     read -p $'\033[32m Azure AD Tenant Name: \033[0m' TENANT
     read -p $'\033[32m Enter Enterprise Application Owner User: \033[0m'  USER
     read -s -p $'\033[32m Enter Enterprise Application Owner Password: \033[0m'  PASS
     echo ''
-    read -p $'\033[32m Azure Enterprise Application ID: \033[0m' SSO_APP_ID
 
     TOKEN=$(authenticate ${USER} ${PASS} ${TENANT})
     [[ -z ${TOKEN} ]] && >&2 echo -e "\033[31m Authentication unsuccessful \033[0m" && exit -1
@@ -113,12 +124,12 @@ set_params(){
                   --arg u "${USER}" \
                   --arg p "${PASS}" \
                   '{AzureUser: $u, AzurePassword: $p}' )
-    MSIAM_ACCESS_ID=$(get_msiam_access_id "${TENANT}" "${SSO_APP_ID}" "${TOKEN}")
+    MSIAM_ACCESS_ID=$(get_msiam_access_id "${TENANT}" "${APP_OBJ_ID}" "${TOKEN}")
     [[ -z ${MSIAM_ACCESS_ID} ]] && >&2 echo -e "\033[31m MSIAM ACCESS ID extraction unsuccessful \033[0m" && exit -1
     put_param "iam-saml.secret" "${JSON_STRING}" SecureString
     put_param "iam-saml.tenant_name" "${TENANT}"
     put_param "iam-saml.msiam_access_id" "${MSIAM_ACCESS_ID}"
-    put_param "iam-saml.appId" "${SSO_APP_ID}"
+
 }
 
 init() {
@@ -135,5 +146,6 @@ init() {
 
 init "${1}" "${2}"
 process_metadata_vars "${1}"
+process_manifest_vars "${1}"
 set_params
 
