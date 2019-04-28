@@ -16,10 +16,11 @@ Resources:
       Description: A function to sync roles with IDP providers
       MemorySize: 128
       Timeout: 300
-      Role: "some:arn"
+      # Role: "arn:aws:iam::946156751766:role/AWS_IAM_AAD_UpdateTask_CrossAccountRole"
+      Policies:
+        - AWSLambdaExecute
       Environment:
         Variables:
-          TENANT: "azure tenant"
           LOG_LEVEL: 10
       Events:
         Periodic:

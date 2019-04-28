@@ -14,15 +14,12 @@ logger.setLevel(log_level)
 
 session = boto3.session.Session()
 ssmc = session.client('ssm')
-kms = session.client('kms')
-
-secret_id = os.environ.get('SECRET_ID', "iam-aws-aad.azureCredentials")
-azure_ad_tenant_name = os.environ.get('TENANT_ID')
+# kms = session.client('kms')
 
 # GRAPH_URL = "https://graph.windows.net/"
 GRAPH_URL = "https://graph.microsoft.com"
 CLIENT_ID = "1950a258-227b-4e31-a9cf-717495945fc2"
-PREFIX = 'iam-aws-aad'
+PREFIX = 'iam-saml'
 azure_user = None
 azure_pass = None
 azure_tenant = None
@@ -37,15 +34,16 @@ access_token = None
 def init_function():
     try:
         global azure_user, azure_pass, azure_tenant, ad_auth_url, msiam_access_id, sso_app_id, ad_principals_url, access_token, req_header
-        cyphered_secret = ssmc.get_parameter(Name=f'{PREFIX}.secret', WithDecryption=False)['Parameter']['Value']
-        secret = json.loads(kms.decrypt(CiphertextBlob=b64decode(cyphered_secret))['Plaintext'].decode("utf-8"))
+        # cyphered_secret = ssmc.get_parameter(Name=f'{PREFIX}.secret', WithDecryption=False)['Parameter']['Value']
+        # secret = json.loads(kms.decrypt(CiphertextBlob=b64decode(cyphered_secret))['Plaintext'].decode("utf-8"))
+        secret_json = ssmc.get_parameter(Name=f'{PREFIX}.secret', WithDecryption=True)['Parameter']['Value']
+        secret = json.loads(secret_json)
         azure_user = secret.get('AzureUser')
         azure_pass = secret.get('AzurePassword')
         azure_tenant = ssmc.get_parameter(Name=f'{PREFIX}.tenant_name')['Parameter']['Value']
-        azure_tenant_id = ssmc.get_parameter(Name=f'{PREFIX}.tenant_id')['Parameter']['Value']
         sso_app_id = ssmc.get_parameter(Name=f'{PREFIX}.appId')['Parameter']['Value']
         msiam_access_id = ssmc.get_parameter(Name=f'{PREFIX}.msiam_access_id')
-        ad_auth_url = f"https://login.microsoftonline.com/{azure_tenant_id}/oauth2/token"
+        ad_auth_url = f"https://login.microsoftonline.com/{azure_tenant}/oauth2/token"
         ad_principals_url = f'https://graph.microsoft.com/beta/{azure_tenant}/servicePrincipals/{sso_app_id}'
         access_token = authenticate()
         req_header = {
@@ -54,7 +52,7 @@ def init_function():
         }
         logger.debug(f'azure token -> {req_header}')
     except ClientError as e:
-        logger.error(f'Secret parameters [{secret_id}] could not be retrieved: {str(e)}')
+        logger.error(f'Some parameters could not be retrieved: {str(e)}')
         exit(-1)
 
 
@@ -167,4 +165,4 @@ def handle(roles_for_providers: dict):
     deleted_roles = get_deleted_roles(new_app_roles, existing_app_roles)
     new_app_roles.extend(deleted_roles)
     update_roles(new_app_roles)
-    delete_roles(new_app_roles, deleted_roles)
+    delete_rgit oles(new_app_roles, deleted_roles)

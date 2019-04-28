@@ -1,21 +1,6 @@
-# role_sync
+# About:
+https://github.com/awslabs/aws-iam-aad
 
-This is a sample template for role_sync:
-
-```bash
-.
-├── README.md                   <-- This instructions file
-├── event.json                  <-- Sample 
-├── sync                 <-- Source code for a lambda function
-│   ├── __init__.py
-│   ├── app.py                  <-- Lambda function code
-│   ├── requirements.txt        <-- Lambda function code
-├── template.yaml               <-- SAM Template to deploy the Lambda function to syncronize roles to SSO providers
-└── tests                       <-- Unit tests
-    └── unit
-        ├── __init__.py
-        └── test_handler.py
-```
 
 ## Requirements
 
@@ -25,7 +10,7 @@ This is a sample template for role_sync:
 
 ## Setup process
 
-This guide relies on the use of CloudFormation stack setw, which is a centralized way of running CloudFormation templates in 
+This guide relies on the use of CloudFormation stack set, which is a centralized way of running CloudFormation templates in 
 member accounts. First we need to prepare the organizations:
 - add the AWSCloudFormationStackSetAdministrationRole and AWSCloudFormationStackSetExecutionRole to the root account 
 - and the role AWSCloudFormationStackSetExecutionRole to **all** of the member accounts 
@@ -40,20 +25,23 @@ aws cloudformation create-stack --stack-name stackset-admin-role \
 ```
 Check the execution status:
 ```bash
-aws cloudformation describe-stacks --stack-name stackset-admin-role --profile root-org --query 'Stacks[0].StackStatus'
+aws cloudformation describe-stacks --stack-name stackset-admin-role \
+--profile root-org --query 'Stacks[0].StackStatus'
 ```
 
 ### Prepare the member accounts
 
 Run the following command once for every member account, using the member credentials (replace the "xxxxyyyyy" with the ID of the root account)
 ```bash
-aws cloudformation create-stack --stack-name cross-account-access-roles --parameters ParameterKey=TrustedAccountNumber,ParameterValue=xxxxyyyyy \
+aws cloudformation create-stack --stack-name cross-account-access-roles \ 
+--parameters ParameterKey=TrustedAccountNumber,ParameterValue=xxxxyyyyy \
 --capabilities CAPABILITY_NAMED_IAM --profile member1 \
 --template-body file://./cfn_templates/cross_account_access_for_invited_members.yaml
 ```
 Wait until the following command returns **"CREATE_COMPLETE"**:
 ```bash
-aws cloudformation describe-stacks --stack-name cross-account-access-roles --profile member1 --query 'Stacks[0].StackStatus'
+aws cloudformation describe-stacks --stack-name cross-account-access-roles \ 
+--profile member1 --query 'Stacks[0].StackStatus'
 ```
 
 In case something goes wrong you might want to check the details with:
