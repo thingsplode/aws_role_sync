@@ -1,30 +1,55 @@
 # About:
-https://github.com/awslabs/aws-iam-aad
+
+This is a sample solution to integrate multiple AWS Organization Member accounts with a 3rd party SAML provider for SSO.
+It provides a Lambda function which can be scheduled to run at specific intervals by CloudWatch and which will visit all the member accounts of an AWS Organizations, read all the Roles
+which do trust a specific SAML IDP Provider and synchronize it with the Provider.
+Currently there is one single Provider Synchronizer implementation with Microsoft Azure, but the solution can be easily extended in the future.
+
+It provides two components, packaged into a single function:
+- the main APP, which can be scheduled from CloudWatch and will collect all Roles trusting a selected SAML provider;
+- azure_sync which will synchronize the collected roles with Azure AD via the Graph (Rest Api);
+
+The function reads all parameters from System Manager's Property Store.
+
+Additionally there are a set of CloudFormation Templates which will:
+- inject [2 roles in all Member Accounts](./cfn_templates/cross_account_access_for_invited_members.yaml) in an AWS Organization in order to execute activities from the root account in the member accounts
+- create a [role in the root account](./cfn_templates/root_account_stackset_admin.yaml) for executing CloudFormation templates in CloudStack in a centralized way
+- install the [SAML providers altogether with standardized roles](./cfn_templates/saml-roles.yaml) in the member accounts
+- additionally a role with limited access to IAM service to read the roles, which can be used by the Lambda function
+
+This solution is loosely based on the original work described in this [blog](https://aws.amazon.com/blogs/security/how-to-automate-saml-federation-to-multiple-aws-accounts-from-microsoft-azure-active-directory/)
+and these [powershell scripts](https://github.com/awslabs/aws-iam-aad);
 
 
 ## Requirements
-
 * AWS CLI already configured with Administrator permission
 * [Python 3 installed](https://www.python.org/downloads/)
 * [Docker installed](https://www.docker.com/community-edition)
+* Administrative access to the root account of an AWS Organization;
+* Admisnistrative access to all the member accounts of an AWS Organization;
+* [Azure SSO Enterprise Application Setup](./docs/azure_setup.md)
 
 ## Setup process
 
-https://aws.amazon.com/blogs/security/how-to-automate-saml-federation-to-multiple-aws-accounts-from-microsoft-azure-active-directory/
-
 This guide relies on the use of CloudFormation stack set, which is a centralized way of running CloudFormation templates in 
-member accounts. First we need to prepare the organizations:
-- add the AWSCloudFormationStackSetAdministrationRole and AWSCloudFormationStackSetExecutionRole to the root account 
-- and the role AWSCloudFormationStackSetExecutionRole to **all** of the member accounts 
+multiple member accounts. First we need to prepare the organization:
+- add the AWSCloudFormationStackSetAdministrationRole and AWSCloudFormationStackSetExecutionRole to the root account;
+- and the role AWSCloudFormationStackSetExecutionRole to **all** of the member accounts;
 
-### Prepare the root account
+Once this step is ready we need to set up our SAML provider. This template takes Azure as an SSO/Sampl Provider sample implementation. The guide to set it up can be found [here](./docs/azure_setup.md).
 
+As soon as we have the METADATA file from the SAML provider, it comes the "pièce de résistance", which is composed of:
+- an [IAM Reader Role](./cfn_templates/member_iam_access_role.yaml) which is deployed in all of the member accounts and later will be be assumed by the Lambda function running in the root account;
+- an [set of standardized roles and an IDP provider](./cfn_templates/saml-roles.yaml) which will be deployed in each and every member account;
+
+### Prepare the root account for executing Stackset instances in each and every member account
 Let's prepare the root account so that to be able to execute Stack Sets:
 ```bash
 aws cloudformation create-stack --stack-name stackset-admin-role \
 --capabilities CAPABILITY_NAMED_IAM --profile root-org \
 --template-body file://./cfn_templates/root_account_stackset_admin.yaml
 ```
+*Please note:* you need to replace the "root-org" with the name of the AWS CLI profile name of your AWS Account, which represents the AWS Organization's Root Account.
 Check the execution status:
 ```bash
 aws cloudformation describe-stacks --stack-name stackset-admin-role \
@@ -40,6 +65,8 @@ aws cloudformation create-stack --stack-name cross-account-access-roles \
 --capabilities CAPABILITY_NAMED_IAM --profile member1 \
 --template-body file://./cfn_templates/cross_account_access_for_invited_members.yaml
 ```
+*Please Note:* the "member1" string needs to be changed to the name of the profile your member account;
+
 Wait until the following command returns **"CREATE_COMPLETE"**:
 ```bash
 aws cloudformation describe-stacks --stack-name cross-account-access-roles \ 
@@ -112,7 +139,7 @@ aws cloudformation create-stack-set --stack-set-name saml-providers-and-roles --
 ```bash
 aws cloudformation list-stack-sets --profile root-org --query "Summaries[?(@.StackSetName=='saml-providers-and-roles')].Status | [0]"
 ```
-If Active we can install the IDP provider in all accounts.
+If Active we can install the IDP/SAML provider in all accounts.
 ```bash
 aws cloudformation create-stack-instances --stack-set-name saml-providers-and-roles \
 --profile root-org --accounts '["xxxxxxyyyyyy","yyyyzzzzzzz"]' \
@@ -129,80 +156,35 @@ aws cloudformation describe-stack-set-operation \
 
 Let's put the cherry on the cake.
 
-### Local development
-
-**Invoking function locally using a local sample payload**
-
+The following command builds the lambda function and will run it on your local computer:
 ```bash
-sam local invoke HelloWorldFunction --event event.json
+sam build && sam local invoke "RoleSyncFunction" -e schedule_evt.json --profile root-org --region eu-west-1
 ```
-
-**Invoking function locally through local API Gateway**
-
-```bash
-sam local start-api
-```
-
-If the previous command ran successfully you should now be able to hit the following local endpoint to invoke your function `http://localhost:3000/hello`
-
-**SAM CLI** is used to emulate both Lambda and API Gateway locally and uses our `template.yaml` to understand how to bootstrap this environment (runtime, where the source code is, etc.) - The following excerpt is what the CLI will read in order to initialize an API and its routes:
-
-```yaml
-...
-Events:
-    HelloWorld:
-        Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
-        Properties:
-            Path: /hello
-            Method: get
-```
-
-## Packaging and deployment
-
-AWS Lambda Python runtime requires a flat folder with all dependencies including the application. SAM will use `CodeUri` property to know where to look up for both application and dependencies:
-
-```yaml
-...
-    HelloWorldFunction:
-        Type: AWS::Serverless::Function
-        Properties:
-            CodeUri: sync
-            ...
-```
-
+### Now let's deploy it
 Firstly, we need a `S3 bucket` where we can upload our Lambda functions packaged as ZIP before we deploy anything - If you don't have a S3 bucket to store code artifacts then this is a good time to create one:
 
 ```bash
-aws s3 mb s3://BUCKET_NAME
+aws s3 mb s3://role-sync-lmbda --profile root-org
 ```
 
 Next, run the following command to package our Lambda function to S3:
 
 ```bash
 sam package \
-    --output-template-file packaged.yaml \
-    --s3-bucket REPLACE_THIS_WITH_YOUR_S3_BUCKET_NAME
+--output-template-file packaged.yaml \
+--s3-bucket role-sync-lmbda --profile root-org
 ```
-
 Next, the following command will create a Cloudformation Stack and deploy your SAM resources.
-
 ```bash
 sam deploy \
-    --template-file packaged.yaml \
-    --stack-name role_sync \
-    --capabilities CAPABILITY_IAM
+--template-file packaged.yaml \
+--stack-name role-sync-func \
+--capabilities CAPABILITY_IAM --profile root-org
 ```
 
 > **See [Serverless Application Model (SAM) HOWTO Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-quick-start.html) for more details in how to get started.**
 
 After deployment is complete you can run the following command to retrieve the API Gateway Endpoint URL:
-
-```bash
-aws cloudformation describe-stacks \
-    --stack-name role_sync \
-    --query 'Stacks[].Outputs[?OutputKey==`HelloWorldApi`]' \
-    --output table
-``` 
 
 ## Fetch, tail, and filter Lambda function logs
 
@@ -211,20 +193,10 @@ To simplify troubleshooting, SAM CLI has a command called sam logs. sam logs let
 `NOTE`: This command works for all AWS Lambda functions; not just the ones you deploy using SAM.
 
 ```bash
-sam logs -n HelloWorldFunction --stack-name role_sync --tail
+sam logs -n -RoleSyncFunction -stack-name role_sync --tail
 ```
 
 You can find more information and examples about filtering Lambda function logs in the [SAM CLI Documentation](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-logging.html).
-
-## Testing
-
-
-Next, we install test dependencies and we run `pytest` against our `tests` folder to run our initial unit tests:
-
-```bash
-pip install pytest pytest-mock --user
-python -m pytest tests/ -v
-```
 
 ## Cleanup
 
@@ -234,81 +206,4 @@ In order to delete our Serverless Application recently deployed you can use the 
 aws cloudformation delete-stack --stack-name role_sync
 ```
 
-## Bringing to the next level
-
-Here are a few things you can try to get more acquainted with building serverless applications using SAM:
-
-### Learn how SAM Build can help you with dependencies
-
-* Uncomment lines on `app.py`
-* Build the project with ``sam build --use-container``
-* Invoke with ``sam local invoke HelloWorldFunction --event event.json``
-* Update tests
-
-### Create an additional API resource
-
-* Create a catch all resource (e.g. /hello/{proxy+}) and return the name requested through this new path
-* Update tests
-
-### Step-through debugging
-
-* **[Enable step-through debugging docs for supported runtimes]((https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-using-debugging.html))**
-
-Next, you can use AWS Serverless Application Repository to deploy ready to use Apps that go beyond hello world samples and learn how authors developed their applications: [AWS Serverless Application Repository main page](https://aws.amazon.com/serverless/serverlessrepo/)
-
-# Appendix
-
-## Building the project
-
-[AWS Lambda requires a flat folder](https://docs.aws.amazon.com/lambda/latest/dg/lambda-python-how-to-create-deployment-package.html) with the application as well as its dependencies in  deployment package. When you make changes to your source code or dependency manifest,
-run the following command to build your project local testing and deployment:
-
-```bash
-sam build
-```
-
-If your dependencies contain native modules that need to be compiled specifically for the operating system running on AWS Lambda, use this command to build inside a Lambda-like Docker container instead:
-```bash
-sam build --use-container
-```
-
-By default, this command writes built artifacts to `.aws-sam/build` folder.
-
-## SAM and AWS CLI commands
-
-All commands used throughout this document
-
-```bash
-# Generate event.json via generate-event command
-sam local generate-event apigateway aws-proxy > event.json
-
-# Invoke function locally with event.json as an input
-sam local invoke HelloWorldFunction --event event.json
-
-# Run API Gateway locally
-sam local start-api
-
-# Create S3 bucket
-aws s3 mb s3://BUCKET_NAME
-
-# Package Lambda function defined locally and upload to S3 as an artifact
-sam package \
-    --output-template-file packaged.yaml \
-    --s3-bucket REPLACE_THIS_WITH_YOUR_S3_BUCKET_NAME
-
-# Deploy SAM template as a CloudFormation stack
-sam deploy \
-    --template-file packaged.yaml \
-    --stack-name role_sync \
-    --capabilities CAPABILITY_IAM
-
-# Describe Output section of CloudFormation stack previously created
-aws cloudformation describe-stacks \
-    --stack-name role_sync \
-    --query 'Stacks[].Outputs[?OutputKey==`HelloWorldApi`]' \
-    --output table
-
-# Tail Lambda function Logs using Logical name defined in SAM Template
-sam logs -n HelloWorldFunction --stack-name role_sync --tail
-```
 
