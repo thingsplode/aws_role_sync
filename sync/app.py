@@ -22,7 +22,6 @@ saml_entity_id = None
 sub_accounts: list = None
 root_account_id = None
 
-
 def init_params():
     global saml_id, saml_entity_id, sso_app_id
     try:
@@ -31,7 +30,6 @@ def init_params():
     except Exception as e:
         logger.error(f'Parameters could not be initialised {str(e)}')
         exit(-1)
-
 
 def cache_accounts():
     global sub_accounts, root_account_id
@@ -98,3 +96,5 @@ def handler(event, context):
     # azure_handler(event, context)
     # print(get_accounts())
     return make_response(200, 'OK')
+
+
